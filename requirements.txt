@@ -1,2 +1,9 @@
 pyrogram>=2.0.106
 TgCrypto
+redis
+mega.py
+requests
+aiohttp
+aiofiles
+hachoir
+pillow
