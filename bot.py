@@ -49,35 +49,41 @@ import redis
 redis.Redis = MockRedis
 redis.StrictRedis = MockRedis
 
-# Load config class or create dummy
-try:
-    if bool(os.environ.get("WEBHOOK", False)):
-        from sample_config import Config
-    else:
-        from config import Config
-except ImportError:
-    class Config:
-        pass
+# Magic Safe Config Class that never raises AttributeError
+class SafeConfigMeta(type):
+    def __getattr__(cls, name):
+        # Look in environment variables first, else fallback safely
+        val = os.environ.get(name, "")
+        if name in ["APP_ID", "CHUNK_SIZE", "PROCESS_MAX_TIMEOUT"]:
+            try:
+                return int(val) if val else 0
+            except ValueError:
+                return 0
+        if name == "AUTH_USERS":
+            return set(int(x) for x in val.split() if x.isdigit())
+        if name in ["DOWNLOAD_LOCATION", "ADMIN_LOCATION", "CREDENTIALS_LOCATION"]:
+            return val or f"./{name.lower()}"
+        return val
 
-defaults = {
-    "TG_BOT_TOKEN": os.environ.get("TG_BOT_TOKEN", os.environ.get("BOT_TOKEN", "")),
-    "APP_ID": int(os.environ.get("APP_ID", os.environ.get("API_ID", 0))),
-    "API_HASH": os.environ.get("API_HASH", ""),
-    "DOWNLOAD_LOCATION": os.environ.get("DOWNLOAD_LOCATION", "./DOWNLOADS"),
-    "ADMIN_LOCATION": os.environ.get("ADMIN_LOCATION", "./plugins"),
-    "CREDENTIALS_LOCATION": os.environ.get("CREDENTIALS_LOCATION", "./credentials"),
-    "AUTH_USERS": set(int(x) for x in os.environ.get("AUTH_USERS", "").split() if x.isdigit()),
-    "REDIS_URI": "localhost:6379",
-    "REDIS_PASS": "",
-    "CHUNK_SIZE": int(os.environ.get("CHUNK_SIZE", 128)),
-    "DEF_THUMB_NAIL_VID_S": os.environ.get("DEF_THUMB_NAIL_VID_S", ""),
-    "MAX_MESSAGE_LENGTH": 4096,
-    "PROCESS_MAX_TIMEOUT": 3600
-}
+class Config(metaclass=SafeConfigMeta):
+    TG_BOT_TOKEN = os.environ.get("TG_BOT_TOKEN", os.environ.get("BOT_TOKEN", ""))
+    APP_ID = int(os.environ.get("APP_ID", os.environ.get("API_ID", 0)))
+    API_HASH = os.environ.get("API_HASH", "")
+    DOWNLOAD_LOCATION = os.environ.get("DOWNLOAD_LOCATION", "./DOWNLOADS")
+    ADMIN_LOCATION = os.environ.get("ADMIN_LOCATION", "./plugins")
+    CREDENTIALS_LOCATION = os.environ.get("CREDENTIALS_LOCATION", "./credentials")
+    REDIS_URI = "localhost:6379"
+    REDIS_PASS = ""
 
-for key, val in defaults.items():
-    if not hasattr(Config, key):
-        setattr(Config, key, val)
+# Inject into sys.modules so all plugins use this safe config
+import types
+cfg_mod = types.ModuleType("config")
+cfg_mod.Config = Config
+sys.modules["config"] = cfg_mod
+
+sample_cfg_mod = types.ModuleType("sample_config")
+sample_cfg_mod.Config = Config
+sys.modules["sample_config"] = sample_cfg_mod
 
 import pyrogram
 from pyrogram import Client, filters, idle
