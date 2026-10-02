@@ -12,7 +12,7 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 
-# Environment variables সরাসরি লোড করা
+# Environment variables
 TG_BOT_TOKEN = os.environ.get("TG_BOT_TOKEN", os.environ.get("BOT_TOKEN", ""))
 APP_ID = int(os.environ.get("APP_ID", os.environ.get("API_ID", 0)))
 API_HASH = os.environ.get("API_HASH", "")
@@ -22,17 +22,25 @@ ADMIN_LOCATION = os.environ.get("ADMIN_LOCATION", "./plugins")
 CREDENTIALS_LOCATION = os.environ.get("CREDENTIALS_LOCATION", "./credentials")
 
 import pyrogram
+from pyrogram import Client, idle
 
-if __name__ == "__main__":
+async def main():
     os.makedirs(DOWNLOAD_LOCATION, exist_ok=True)
     os.makedirs(ADMIN_LOCATION, exist_ok=True)
     os.makedirs(CREDENTIALS_LOCATION, exist_ok=True)
 
-    app = pyrogram.Client(
+    app = Client(
         "Mega_Link_Downloader_Bot",
         bot_token=TG_BOT_TOKEN,
         api_id=APP_ID,
         api_hash=API_HASH,
         plugins=dict(root="plugins")
     )
-    app.run()
+    
+    await app.start()
+    logging.info("Bot Started Successfully!")
+    await idle()
+    await app.stop()
+
+if __name__ == "__main__":
+    asyncio.get_event_loop().run_until_complete(main())
