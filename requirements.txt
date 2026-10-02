@@ -7,3 +7,12 @@ aiohttp
 aiofiles
 hachoir
 pillow
+numpy
+opencv-python-headless
+psutil
+tqdm
+tenacity
+pycryptodome
+urllib3
+ffmpeg-python
+python-magic
