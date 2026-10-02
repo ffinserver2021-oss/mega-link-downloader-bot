@@ -13,7 +13,7 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 
-# Dummy In-Memory Redis to bypass localhost:6379 connection error
+# Dummy In-Memory Redis to bypass localhost:6379 error
 class MockRedis:
     def __init__(self, *args, **kwargs):
         self.store = {}
@@ -80,7 +80,11 @@ for key, val in defaults.items():
         setattr(Config, key, val)
 
 import pyrogram
-from pyrogram import Client, idle
+from pyrogram import Client, filters, idle
+
+# Patch missing filters.edited in Pyrogram v2
+if not hasattr(filters, "edited"):
+    filters.edited = filters.create(lambda _, __, ___: False)
 
 async def main():
     os.makedirs(Config.DOWNLOAD_LOCATION, exist_ok=True)
@@ -101,4 +105,4 @@ async def main():
     await app.stop()
 
 if __name__ == "__main__":
-    asyncio.get_event_loop().run_until_complete(main())
+    asyncio.get_event_loop().run_until_complete(main())run_until_complete(main())
