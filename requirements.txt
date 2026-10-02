@@ -1,6 +1,6 @@
 pyrogram>=2.0.106
 TgCrypto
-redis
+redis==3.5.3
 mega.py
 requests
 aiohttp
