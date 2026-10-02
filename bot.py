@@ -1,53 +1,38 @@
 import asyncio
+import os
+import logging
 
-# Fix for event loop issues in newer Python versions
 try:
     asyncio.get_event_loop()
 except RuntimeError:
     asyncio.set_event_loop(asyncio.new_event_loop())
 
-import logging
-logging.basicConfig(level=logging.DEBUG,
-                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 
-import os
+# Environment variables সরাসরি লোড করা
+TG_BOT_TOKEN = os.environ.get("TG_BOT_TOKEN", os.environ.get("BOT_TOKEN", ""))
+APP_ID = int(os.environ.get("APP_ID", os.environ.get("API_ID", 0)))
+API_HASH = os.environ.get("API_HASH", "")
 
-# the secret configuration specific things
-if bool(os.environ.get("WEBHOOK", False)):
-    from sample_config import Config
-else:
-    from config import Config
-
-# Ensure required directory configs exist with defaults if missing
-if not hasattr(Config, "DOWNLOAD_LOCATION"):
-    setattr(Config, "DOWNLOAD_LOCATION", os.environ.get("DOWNLOAD_LOCATION", "./DOWNLOADS"))
-if not hasattr(Config, "ADMIN_LOCATION"):
-    setattr(Config, "ADMIN_LOCATION", os.environ.get("ADMIN_LOCATION", "./plugins"))
-if not hasattr(Config, "CREDENTIALS_LOCATION"):
-    setattr(Config, "CREDENTIALS_LOCATION", os.environ.get("CREDENTIALS_LOCATION", "./credentials"))
+DOWNLOAD_LOCATION = os.environ.get("DOWNLOAD_LOCATION", "./DOWNLOADS")
+ADMIN_LOCATION = os.environ.get("ADMIN_LOCATION", "./plugins")
+CREDENTIALS_LOCATION = os.environ.get("CREDENTIALS_LOCATION", "./credentials")
 
 import pyrogram
-logging.getLogger("pyrogram").setLevel(logging.WARNING)
-from pyrogram import Client, idle
 
 if __name__ == "__main__":
-    # Creating essential directories, if they do not exist
-    if not os.path.isdir(Config.DOWNLOAD_LOCATION):
-        os.makedirs(Config.DOWNLOAD_LOCATION, exist_ok=True)
-    if not os.path.isdir(Config.ADMIN_LOCATION):
-        os.makedirs(Config.ADMIN_LOCATION, exist_ok=True)
-    if not os.path.isdir(Config.CREDENTIALS_LOCATION):
-        os.makedirs(Config.CREDENTIALS_LOCATION, exist_ok=True)
-        
-    plugins = dict(
-        root="plugins"
-    )
+    os.makedirs(DOWNLOAD_LOCATION, exist_ok=True)
+    os.makedirs(ADMIN_LOCATION, exist_ok=True)
+    os.makedirs(CREDENTIALS_LOCATION, exist_ok=True)
+
     app = pyrogram.Client(
         "Mega_Link_Downloader_Bot",
-        bot_token=Config.TG_BOT_TOKEN,
-        api_id=Config.APP_ID,
-        api_hash=Config.API_HASH,
-        plugins=plugins
+        bot_token=TG_BOT_TOKEN,
+        api_id=APP_ID,
+        api_hash=API_HASH,
+        plugins=dict(root="plugins")
     )
     app.run()
