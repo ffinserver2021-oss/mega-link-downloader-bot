@@ -102,19 +102,19 @@ sample_cfg_mod = types.ModuleType("sample_config")
 sample_cfg_mod.Config = Config
 sys.modules["sample_config"] = sample_cfg_mod
 
-# Prevent Mega login crash
+# Prevent Mega login crash and ensure client instance is preserved
 try:
     import mega
     original_login = mega.Mega.login
     def safe_login(self, email=None, password=None):
         if not email or not password:
-            logging.warning("No Mega credentials provided; skipping login to run anonymously.")
-            return None
+            logging.warning("No Mega credentials provided; proceeding as anonymous guest.")
+            return self
         try:
             return original_login(self, email, password)
         except Exception as e:
-            logging.error(f"Mega login failed: {e}. Continuing without login.")
-            return None
+            logging.error(f"Mega login failed: {e}. Falling back to anonymous guest.")
+            return self
     mega.Mega.login = safe_login
 except ImportError:
     pass
