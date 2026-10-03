@@ -15,7 +15,7 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 
-# Dummy Web Server for Render port check
+# Dummy Web Server to satisfy Render Web Service port check
 class SimpleHealthCheck(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
