@@ -1,169 +1,104 @@
-import asyncio
 import os
-import sys
+import time
+import math
+import asyncio
 import logging
-import threading
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from pyrogram import Client, filters
+from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from mega import Mega
+from helpers.display_progress import progress_for_pyrogram, humanbytes
+from helpers.files_spliiting import split_files, split_video_files
 
+# Safe Config import
 try:
-    asyncio.get_event_loop()
-except RuntimeError:
-    asyncio.set_event_loop(asyncio.new_event_loop())
-
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-
-# Dummy Web Server to satisfy Render Web Service port check
-class SimpleHealthCheck(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.send_header("Content-type", "text/plain")
-        self.end_headers()
-        self.wfile.write(b"Bot is alive and running!")
-    def log_message(self, format, *args):
-        pass
-
-def run_dummy_server():
-    port = int(os.environ.get("PORT", 8080))
-    server = HTTPServer(("0.0.0.0", port), SimpleHealthCheck)
-    server.serve_forever()
-
-threading.Thread(target=run_dummy_server, daemon=True).start()
-
-# Dummy In-Memory Redis
-class MockRedis:
-    def __init__(self, *args, **kwargs):
-        self.store = {}
-    def ping(self):
-        return True
-    def set(self, name, value, *args, **kwargs):
-        self.store[name] = value
-        return True
-    def get(self, name):
-        return self.store.get(name)
-    def delete(self, *names):
-        for n in names:
-            self.store.pop(n, None)
-        return True
-    def smembers(self, name):
-        return self.store.get(name, set())
-    def sadd(self, name, *values):
-        s = self.store.setdefault(name, set())
-        for v in values:
-            s.add(str(v).encode() if isinstance(v, str) else v)
-        return True
-    def srem(self, name, *values):
-        s = self.store.setdefault(name, set())
-        for v in values:
-            s.discard(str(v).encode() if isinstance(v, str) else v)
-        return True
-    def sismember(self, name, value):
-        s = self.store.get(name, set())
-        val = str(value).encode() if isinstance(value, str) else value
-        return val in s
-
-import redis
-redis.Redis = MockRedis
-redis.StrictRedis = MockRedis
-
-# Safe Config
-class SafeConfigMeta(type):
-    def __getattr__(cls, name):
-        val = os.environ.get(name, "")
-        if name in ["APP_ID", "CHUNK_SIZE", "PROCESS_MAX_TIMEOUT"]:
-            try:
-                return int(val) if val else 0
-            except ValueError:
-                return 0
-        if name == "AUTH_USERS":
-            return set(int(x) for x in val.split() if x.isdigit())
-        if name in ["DOWNLOAD_LOCATION", "ADMIN_LOCATION", "CREDENTIALS_LOCATION"]:
-            return val or f"./{name.lower()}"
-        return val
-
-class Config(metaclass=SafeConfigMeta):
-    TG_BOT_TOKEN = os.environ.get("TG_BOT_TOKEN", os.environ.get("BOT_TOKEN", ""))
-    APP_ID = int(os.environ.get("APP_ID", os.environ.get("API_ID", 0)))
-    API_HASH = os.environ.get("API_HASH", "")
-    DOWNLOAD_LOCATION = os.environ.get("DOWNLOAD_LOCATION", "./DOWNLOADS")
-    ADMIN_LOCATION = os.environ.get("ADMIN_LOCATION", "./plugins")
-    CREDENTIALS_LOCATION = os.environ.get("CREDENTIALS_LOCATION", "./credentials")
-    REDIS_URI = "localhost:6379"
-    REDIS_PASS = ""
-
-import types
-cfg_mod = types.ModuleType("config")
-cfg_mod.Config = Config
-sys.modules["config"] = cfg_mod
-
-sample_cfg_mod = types.ModuleType("sample_config")
-sample_cfg_mod.Config = Config
-sys.modules["sample_config"] = sample_cfg_mod
-
-# Prevent Mega login crash and ensure client instance is preserved
-try:
-    import mega
-    original_login = mega.Mega.login
-    def safe_login(self, email=None, password=None):
-        if not email or not password:
-            logging.warning("No Mega credentials provided; proceeding as anonymous guest.")
-            return self
-        try:
-            return original_login(self, email, password)
-        except Exception as e:
-            logging.error(f"Mega login failed: {e}. Falling back to anonymous guest.")
-            return self
-    mega.Mega.login = safe_login
+    from config import Config
 except ImportError:
-    pass
+    class Config:
+        DOWNLOAD_LOCATION = "./DOWNLOADS"
+        AUTH_USERS = set()
+        PROCESS_MAX_TIMEOUT = 3600
 
-import pyrogram
-from pyrogram import Client, filters, idle
-from pyrogram.types import Message
-from pyrogram.enums import ParseMode
-import pyrogram.parser.parser
+@Client.on_message(filters.regex(r"https?://mega(\.co)?\.nz/.*") & filters.private)
+async def mega_dl_handler(client, message):
+    if Config.AUTH_USERS and message.from_user.id not in Config.AUTH_USERS:
+        await message.reply_text("You are not authorized to use this bot.")
+        return
 
-# Backward compatibility patches for Pyrogram v2
-if not hasattr(filters, "edited"):
-    filters.edited = filters.create(lambda _, __, ___: False)
+    url = message.text.strip()
+    status_msg = await message.reply_text("⚡ Processing Mega link...", quote=True)
 
-# Patch Message.message_id -> Message.id
-Message.message_id = property(lambda self: self.id)
+    fname = f"mega_file_{int(time.time())}"
+    download_dir = Config.DOWNLOAD_LOCATION
+    os.makedirs(download_dir, exist_ok=True)
 
-# Patch Parser to support legacy string parse_modes like "html" / "markdown"
-original_parse = pyrogram.parser.parser.Parser.parse
-def patched_parse(self, text, parse_mode=object):
-    if isinstance(parse_mode, str):
-        mode_lower = parse_mode.lower()
-        if mode_lower in ("html", "default"):
-            parse_mode = ParseMode.HTML
-        elif mode_lower in ("md", "markdown"):
-            parse_mode = ParseMode.MARKDOWN
-        elif mode_lower == "disabled":
-            parse_mode = ParseMode.DISABLED
-    return original_parse(self, text, parse_mode)
+    try:
+        m = Mega()
+        # Initialize mega client anonymously
+        try:
+            m = m.login()
+        except Exception:
+            pass
 
-pyrogram.parser.parser.Parser.parse = patched_parse
+        # Fetch URL info safely
+        try:
+            file_info = m.get_public_url_info(url)
+            if isinstance(file_info, dict) and "name" in file_info:
+                fname = file_info["name"]
+        except Exception as e:
+            logging.warning(f"Could not retrieve file_info: {e}")
 
-async def main():
-    os.makedirs(Config.DOWNLOAD_LOCATION, exist_ok=True)
-    os.makedirs(Config.ADMIN_LOCATION, exist_ok=True)
-    os.makedirs(Config.CREDENTIALS_LOCATION, exist_ok=True)
+        await status_msg.edit_text(f"📥 Downloading: `{fname}`\nPlease wait...")
+        start_time = time.time()
 
-    app = Client(
-        "Mega_Link_Downloader_Bot",
-        bot_token=Config.TG_BOT_TOKEN,
-        api_id=Config.APP_ID,
-        api_hash=Config.API_HASH,
-        plugins=dict(root="plugins")
-    )
-    
-    await app.start()
-    logging.info(">>> BOT STARTED SUCCESSFULLY! <<<")
-    await idle()
-    await app.stop()
+        # Download the file
+        download_path = m.download_url(url, dest_path=download_dir, dest_filename=fname)
 
-if __name__ == "__main__":
-    asyncio.get_event_loop().run_until_complete(main())
+        if not download_path or not os.path.exists(str(download_path)):
+            # If download_url didn't return path directly, look inside dest_path
+            possible_file = os.path.join(download_dir, fname)
+            if os.path.exists(possible_file):
+                download_path = possible_file
+            else:
+                await status_msg.edit_text("❌ Download failed: File not found on disk.")
+                return
+
+        file_size = os.path.getsize(download_path)
+        await status_msg.edit_text(f"📤 Uploading: `{os.path.basename(download_path)}` ({humanbytes(file_size)})...")
+
+        # Telegram 2GB Limit check
+        if file_size > 2000 * 1024 * 1024:
+            await status_msg.edit_text("✂️ File is larger than 2GB. Splitting file...")
+            split_files_list = split_files(download_path)
+            for part in split_files_list:
+                await client.send_document(
+                    chat_id=message.chat.id,
+                    document=part,
+                    caption=f"`{os.path.basename(part)}`",
+                    reply_to_message_id=message.id
+                )
+                if os.path.exists(part):
+                    os.remove(part)
+            await status_msg.delete()
+        else:
+            # Upload normally
+            await client.send_document(
+                chat_id=message.chat.id,
+                document=download_path,
+                caption=f"`{os.path.basename(download_path)}`",
+                reply_to_message_id=message.id,
+                progress=progress_for_pyrogram,
+                progress_args=("Uploading...", status_msg, start_time)
+            )
+            await status_msg.delete()
+
+        if os.path.exists(download_path):
+            os.remove(download_path)
+
+    except Exception as e:
+        logging.error(f"Error in mega_dl_handler: {e}", exc_info=True)
+        await status_msg.edit_text(
+            f"**Error:** `{e}`\n\n"
+            "Sorry, some error occurred!\n"
+            "• Make sure the link is valid and public.\n"
+            "• Make sure it is a single file link (folder links require folder support)."
+        )
