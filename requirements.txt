@@ -16,3 +16,4 @@ pycryptodome
 urllib3
 ffmpeg-python
 python-magic
+filesplit
