@@ -168,10 +168,10 @@ async def pyrogram_upload_progress(current, total, client, message_id, chat_id, 
     except Exception:
         pass
 
-# In-Memory Client Session to eliminate sqlite session lock
+# Universal Client instance (session file auto cleanup)
+session_name = f"bot_run_{int(time.time())}"
 app = Client(
-    name="bot_session_clean",
-    in_memory=True,
+    session_name,
     bot_token=Config.TG_BOT_TOKEN,
     api_id=Config.APP_ID,
     api_hash=Config.API_HASH
@@ -209,7 +209,7 @@ async def mega_dl_handler(client, message):
         except Exception as e:
             logging.warning(f"Metadata error: {e}")
 
-        # Strict safety check for Render 512MB RAM
+        # Safety check for Render 512MB RAM
         if total_size > 500 * 1024 * 1024:
             await status_msg.edit_text(
                 f"⚠️ **File is too large ({humanbytes(total_size)})!**\n\n"
