@@ -44,10 +44,7 @@ async def progress_for_pyrogram(current, total, ud_type, message, start):
 
 @Client.on_message(filters.regex(r"https?://mega(\.co)?\.nz/.*") & filters.private)
 async def mega_dl_handler(client, message):
-    if Config.AUTH_USERS and message.from_user.id not in Config.AUTH_USERS:
-        await message.reply_text("You are not authorized to use this bot.")
-        return
-
+    # Authorization check removed to allow direct usage
     url = message.text.strip()
     status_msg = await message.reply_text("⚡ Processing Mega link...", quote=True)
 
