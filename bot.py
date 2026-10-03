@@ -2,6 +2,8 @@ import asyncio
 import os
 import sys
 import logging
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 
 try:
     asyncio.get_event_loop()
@@ -12,6 +14,23 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
+
+# Dummy Web Server to satisfy Render Web Service port check
+class SimpleHealthCheck(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-type", "text/plain")
+        self.end_headers()
+        self.wfile.write(b"Bot is alive and running!")
+    def log_message(self, format, *args):
+        pass
+
+def run_dummy_server():
+    port = int(os.environ.get("PORT", 8080))
+    server = HTTPServer(("0.0.0.0", port), SimpleHealthCheck)
+    server.serve_forever()
+
+threading.Thread(target=run_dummy_server, daemon=True).start()
 
 # Dummy In-Memory Redis
 class MockRedis:
@@ -103,14 +122,30 @@ except ImportError:
 import pyrogram
 from pyrogram import Client, filters, idle
 from pyrogram.types import Message
+from pyrogram.enums import ParseMode
+import pyrogram.parser.parser
 
 # Backward compatibility patches for Pyrogram v2
 if not hasattr(filters, "edited"):
     filters.edited = filters.create(lambda _, __, ___: False)
 
 # Patch Message.message_id -> Message.id
-if not hasattr(Message, "message_id"):
-    Message.message_id = property(lambda self: self.id)
+Message.message_id = property(lambda self: self.id)
+
+# Patch Parser to support legacy string parse_modes like "html" / "markdown"
+original_parse = pyrogram.parser.parser.Parser.parse
+def patched_parse(self, text, parse_mode=object):
+    if isinstance(parse_mode, str):
+        mode_lower = parse_mode.lower()
+        if mode_lower in ("html", "default"):
+            parse_mode = ParseMode.HTML
+        elif mode_lower in ("md", "markdown"):
+            parse_mode = ParseMode.MARKDOWN
+        elif mode_lower == "disabled":
+            parse_mode = ParseMode.DISABLED
+    return original_parse(self, text, parse_mode)
+
+pyrogram.parser.parser.Parser.parse = patched_parse
 
 async def main():
     os.makedirs(Config.DOWNLOAD_LOCATION, exist_ok=True)
