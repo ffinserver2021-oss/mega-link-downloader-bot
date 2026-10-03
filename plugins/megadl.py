@@ -1,14 +1,12 @@
 import os
+import sys
 import time
 import math
 import asyncio
 import logging
 from pyrogram import Client, filters
-from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from mega import Mega
-from helpers.display_progress import progress_for_pyrogram, humanbytes
-from helpers.files_spliiting import split_files, split_video_files
 
+# Safe Config import
 try:
     from config import Config
 except ImportError:
@@ -16,6 +14,33 @@ except ImportError:
         DOWNLOAD_LOCATION = "./DOWNLOADS"
         AUTH_USERS = set()
         PROCESS_MAX_TIMEOUT = 3600
+
+def humanbytes(size):
+    if not size:
+        return "0 B"
+    for unit in ["B", "KB", "MB", "GB", "TB"]:
+        if abs(size) < 1024.0:
+            return f"{size:3.1f} {unit}"
+        size /= 1024.0
+    return f"{size:.1f} PB"
+
+async def progress_for_pyrogram(current, total, ud_type, message, start):
+    now = time.time()
+    diff = now - start
+    if round(diff % 10.00) == 0 or current == total:
+        percentage = current * 100 / total
+        speed = current / diff if diff > 0 else 0
+        elapsed_time = round(diff) * 1000
+        time_to_completion = round((total - current) / speed) * 1000 if speed > 0 else 0
+        progress_str = f"[{'■' * math.floor(percentage / 10)}{'□' * (10 - math.floor(percentage / 10))}]"
+        tmp = f"{progress_str} {round(percentage, 2)}%\n" \
+              f"**Total:** {humanbytes(total)}\n" \
+              f"**Speed:** {humanbytes(speed)}/s\n" \
+              f"**Done:** {humanbytes(current)}"
+        try:
+            await message.edit_text(f"{ud_type}\n{tmp}")
+        except Exception:
+            pass
 
 @Client.on_message(filters.regex(r"https?://mega(\.co)?\.nz/.*") & filters.private)
 async def mega_dl_handler(client, message):
@@ -31,6 +56,7 @@ async def mega_dl_handler(client, message):
     os.makedirs(download_dir, exist_ok=True)
 
     try:
+        from mega import Mega
         m = Mega()
         try:
             m = m.login()
@@ -60,29 +86,15 @@ async def mega_dl_handler(client, message):
         file_size = os.path.getsize(download_path)
         await status_msg.edit_text(f"📤 Uploading: `{os.path.basename(download_path)}` ({humanbytes(file_size)})...")
 
-        if file_size > 2000 * 1024 * 1024:
-            await status_msg.edit_text("✂️ File is larger than 2GB. Splitting file...")
-            split_files_list = split_files(download_path)
-            for part in split_files_list:
-                await client.send_document(
-                    chat_id=message.chat.id,
-                    document=part,
-                    caption=f"`{os.path.basename(part)}`",
-                    reply_to_message_id=message.id
-                )
-                if os.path.exists(part):
-                    os.remove(part)
-            await status_msg.delete()
-        else:
-            await client.send_document(
-                chat_id=message.chat.id,
-                document=download_path,
-                caption=f"`{os.path.basename(download_path)}`",
-                reply_to_message_id=message.id,
-                progress=progress_for_pyrogram,
-                progress_args=("Uploading...", status_msg, start_time)
-            )
-            await status_msg.delete()
+        await client.send_document(
+            chat_id=message.chat.id,
+            document=download_path,
+            caption=f"`{os.path.basename(download_path)}`",
+            reply_to_message_id=message.id,
+            progress=progress_for_pyrogram,
+            progress_args=("Uploading...", status_msg, start_time)
+        )
+        await status_msg.delete()
 
         if os.path.exists(download_path):
             os.remove(download_path)
