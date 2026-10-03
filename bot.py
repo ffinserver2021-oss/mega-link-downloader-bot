@@ -13,7 +13,7 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 
-# Dummy In-Memory Redis to bypass localhost:6379 error
+# Dummy In-Memory Redis
 class MockRedis:
     def __init__(self, *args, **kwargs):
         self.store = {}
@@ -49,10 +49,9 @@ import redis
 redis.Redis = MockRedis
 redis.StrictRedis = MockRedis
 
-# Magic Safe Config Class that never raises AttributeError
+# Safe Config Class
 class SafeConfigMeta(type):
     def __getattr__(cls, name):
-        # Look in environment variables first, else fallback safely
         val = os.environ.get(name, "")
         if name in ["APP_ID", "CHUNK_SIZE", "PROCESS_MAX_TIMEOUT"]:
             try:
@@ -75,7 +74,6 @@ class Config(metaclass=SafeConfigMeta):
     REDIS_URI = "localhost:6379"
     REDIS_PASS = ""
 
-# Inject into sys.modules so all plugins use this safe config
 import types
 cfg_mod = types.ModuleType("config")
 cfg_mod.Config = Config
@@ -85,10 +83,26 @@ sample_cfg_mod = types.ModuleType("sample_config")
 sample_cfg_mod.Config = Config
 sys.modules["sample_config"] = sample_cfg_mod
 
+# Prevent Mega login crash
+try:
+    import mega
+    original_login = mega.Mega.login
+    def safe_login(self, email=None, password=None):
+        if not email or not password:
+            logging.warning("No Mega credentials provided; skipping login to run anonymously.")
+            return None
+        try:
+            return original_login(self, email, password)
+        except Exception as e:
+            logging.error(f"Mega login failed: {e}. Continuing without login.")
+            return None
+    mega.Mega.login = safe_login
+except ImportError:
+    pass
+
 import pyrogram
 from pyrogram import Client, filters, idle
 
-# Patch missing filters.edited in Pyrogram v2
 if not hasattr(filters, "edited"):
     filters.edited = filters.create(lambda _, __, ___: False)
 
