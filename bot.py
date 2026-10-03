@@ -49,7 +49,7 @@ import redis
 redis.Redis = MockRedis
 redis.StrictRedis = MockRedis
 
-# Safe Config Class
+# Safe Config
 class SafeConfigMeta(type):
     def __getattr__(cls, name):
         val = os.environ.get(name, "")
@@ -102,9 +102,15 @@ except ImportError:
 
 import pyrogram
 from pyrogram import Client, filters, idle
+from pyrogram.types import Message
 
+# Backward compatibility patches for Pyrogram v2
 if not hasattr(filters, "edited"):
     filters.edited = filters.create(lambda _, __, ___: False)
+
+# Patch Message.message_id -> Message.id
+if not hasattr(Message, "message_id"):
+    Message.message_id = property(lambda self: self.id)
 
 async def main():
     os.makedirs(Config.DOWNLOAD_LOCATION, exist_ok=True)
