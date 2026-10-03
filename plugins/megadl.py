@@ -24,23 +24,35 @@ def humanbytes(size):
         size /= 1024.0
     return f"{size:.1f} PB"
 
-async def progress_for_pyrogram(current, total, ud_type, message, start):
+# Reliable Telegram Upload Progress Callback
+last_edit_time = {}
+
+async def pyrogram_upload_progress(current, total, client, message_id, chat_id, start_time, file_name):
     now = time.time()
-    diff = now - start
-    if round(diff % 5.00) == 0 or current == total:
-        percentage = current * 100 / total
-        speed = current / diff if diff > 0 else 0
-        elapsed_time = round(diff) * 1000
-        time_to_completion = round((total - current) / speed) * 1000 if speed > 0 else 0
-        progress_str = f"[{'■' * math.floor(percentage / 10)}{'□' * (10 - math.floor(percentage / 10))}]"
-        tmp = f"{progress_str} {round(percentage, 2)}%\n" \
-              f"**Total:** {humanbytes(total)}\n" \
-              f"**Speed:** {humanbytes(speed)}/s\n" \
-              f"**Done:** {humanbytes(current)}"
-        try:
-            await message.edit_text(f"{ud_type}\n{tmp}")
-        except Exception:
-            pass
+    task_key = f"{chat_id}_{message_id}"
+    
+    # Update every 3.5 seconds or when 100% complete
+    if task_key in last_edit_time and (now - last_edit_time[task_key]) < 3.5 and current != total:
+        return
+
+    last_edit_time[task_key] = now
+    diff = max(0.1, now - start_time)
+    pct = round((current * 100) / total, 1)
+    speed = current / diff
+    filled = int(pct // 10)
+    bar = "■" * filled + "□" * (10 - filled)
+
+    text = (
+        f"📤 **Uploading to Telegram...**\n"
+        f"📄 `{file_name}`\n"
+        f"[{bar}] **{pct}%**\n"
+        f"⚡ **Speed:** {humanbytes(speed)}/s\n"
+        f"📦 **Done:** {humanbytes(current)} / {humanbytes(total)}"
+    )
+    try:
+        await client.edit_message_text(chat_id=chat_id, message_id=message_id, text=text)
+    except Exception:
+        pass
 
 @Client.on_message(filters.regex(r"https?://mega(\.co)?\.nz/.*") & filters.private)
 async def mega_dl_handler(client, message):
@@ -68,11 +80,11 @@ async def mega_dl_handler(client, message):
         except Exception as e:
             logging.warning(f"Could not retrieve file_info: {e}")
 
-        await status_msg.edit_text(f"📥 Downloading: `{fname}`\nInitializing...")
+        await status_msg.edit_text(f"📥 **Downloading:** `{fname}`\nConnecting to Mega...")
         start_time = time.time()
         target_path = os.path.join(download_dir, fname)
 
-        # Thread pool-এ ব্যাকগ্রাউন্ডে ডাউনলোড রান করা
+        # Background Mega Download
         loop = asyncio.get_event_loop()
         executor = ThreadPoolExecutor(max_workers=2)
         download_future = loop.run_in_executor(
@@ -80,24 +92,32 @@ async def mega_dl_handler(client, message):
             lambda: m.download_url(url, dest_path=download_dir, dest_filename=fname)
         )
 
-        # লাইভ প্রগ্রেস মনিটরিং লুপ
+        # Progress monitor loop for downloading
         while not download_future.done():
-            await asyncio.sleep(4)
+            await asyncio.sleep(3)
             current_size = 0
+            
+            # Check target path or any temporary file created in the download directory
             if os.path.exists(target_path):
                 current_size = os.path.getsize(target_path)
-            
+            else:
+                for f in os.listdir(download_dir):
+                    fp = os.path.join(download_dir, f)
+                    if os.path.isfile(fp):
+                        current_size = max(current_size, os.path.getsize(fp))
+
             if total_size > 0 and current_size > 0:
-                diff = time.time() - start_time
-                pct = min(100.0, (current_size / total_size) * 100)
-                speed = current_size / diff if diff > 0 else 0
-                prog_bar = f"[{'■' * math.floor(pct / 10)}{'□' * (10 - math.floor(pct / 10))}]"
+                diff = max(0.1, time.time() - start_time)
+                pct = min(100.0, round((current_size / total_size) * 100, 1))
+                speed = current_size / diff
+                filled = int(pct // 10)
+                bar = "■" * filled + "□" * (10 - filled)
                 text = (
-                    f"📥 **Downloading:** `{fname}`\n"
-                    f"{prog_bar} {round(pct, 2)}%\n"
-                    f"**Total:** {humanbytes(total_size)}\n"
-                    f"**Speed:** {humanbytes(speed)}/s\n"
-                    f"**Done:** {humanbytes(current_size)}"
+                    f"📥 **Downloading from Mega...**\n"
+                    f"📄 `{fname}`\n"
+                    f"[{bar}] **{pct}%**\n"
+                    f"⚡ **Speed:** {humanbytes(speed)}/s\n"
+                    f"📦 **Done:** {humanbytes(current_size)} / {humanbytes(total_size)}"
                 )
                 try:
                     await status_msg.edit_text(text)
@@ -110,22 +130,29 @@ async def mega_dl_handler(client, message):
             if os.path.exists(target_path):
                 download_path = target_path
             else:
-                await status_msg.edit_text("❌ Download failed: File not found on disk.")
+                await status_msg.edit_text("❌ Download failed: File not found.")
                 return
 
         file_size = os.path.getsize(download_path)
+        actual_name = os.path.basename(download_path)
         upload_start = time.time()
-        await status_msg.edit_text(f"📤 Uploading: `{os.path.basename(download_path)}` ({humanbytes(file_size)})...")
 
+        await status_msg.edit_text(f"📤 Preparing upload for `{actual_name}` ({humanbytes(file_size)})...")
+
+        # Upload with reliable progress updater
         await client.send_document(
             chat_id=message.chat.id,
             document=download_path,
-            caption=f"`{os.path.basename(download_path)}`",
+            caption=f"📁 `{actual_name}`\n📦 Size: `{humanbytes(file_size)}`",
             reply_to_message_id=message.id,
-            progress=progress_for_pyrogram,
-            progress_args=("📤 **Uploading to Telegram...**", status_msg, upload_start)
+            progress=pyrogram_upload_progress,
+            progress_args=(client, status_msg.id, message.chat.id, upload_start, actual_name)
         )
-        await status_msg.delete()
+        
+        try:
+            await status_msg.delete()
+        except Exception:
+            pass
 
         if os.path.exists(download_path):
             os.remove(download_path)
@@ -135,6 +162,5 @@ async def mega_dl_handler(client, message):
         await status_msg.edit_text(
             f"**Error:** `{e}`\n\n"
             "Sorry, some error occurred!\n"
-            "• Make sure the link is valid and public.\n"
-            "• Make sure it is a single file link."
-    )
+            "• Make sure the link is valid and public."
+                )
